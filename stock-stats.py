@@ -153,7 +153,7 @@ class Plots(Data):
 		self.end = end
 
 	def ticker_velo_accel_plot(self, window):
-		"""Plot the stock price, its 'velocity (1st) derivative', and its 'acceleration (2nd) derivative.'"""
+		"""Plot the stock price, its 'velocity (1st) derivative', and its 'acceleration (2nd) derivative', where the window parameter is taken as the rolling average function's input."""
 		velo = Data(self.symbol, self.start, self.end).dailyrets() + 1
 		velo_ma = velo.rolling(window).mean()
 		accel = velo / velo.shift(1)
@@ -551,7 +551,6 @@ class Indicators(Data):
 		fig.tight_layout()
 		plt.autoscale(enable=True, axis='x')
 		plt.show()
-		#plt.savefig(f"C:/users/teddy/onedrive/desktop/trading/indicators/macd_output/{self.symbol.upper()}")
 
 	def macdretsandplot(self, shortspan, longspan, signalspan):
 		"""Given short-term EMA, long-term EMA and signal, plot and calculate MACD returns (and passive returns as comparison)."""
@@ -591,9 +590,30 @@ class Indicators(Data):
 		df['signal'] = df['macd'].ewm(span=signalspan).mean()
 		df['trading signal'] = np.where(df['macd'] > df['signal'], 1, 0) # buy signals only. track macd/signal trading signal
 		
-		# The actual trading signal will require a trading signal as well as a greater than 2% swing.
-		# i.e. MACD falls more than 2% before crossing above means buy
-		# MACD rises more than 2% before crossing below means sell
+		# The actual trading signal will require a trading signal as well as a greater than 2% deviation from shortEMA/longEMA equivalence.
+		# i.e. MACD / Stock price < -2% + MACD line crosses above signal line = BUY
+		# MACD / Stock price > 2% + MACD line crosses below signal line = SELL
+		      
+		df['w_macd'] = df['macd'] / df['Close'] # weigh MACD relative to stock price
+		df['w_signal'] = df['signal'] / df['Close'] # weigh signal relative to stock price
+		df['crossover'] = np.sign(df['w_macd'] - df['w_signal'])
+		df['crossover'] = df['crossover'].diff() / 2 # This will yield +1 if MACD crossed above the signal line yesterday, -1 if it crossed below, and zero otherwise!
+		df['tradeable_yn'] = None
+		for i in range(len(df)):
+			if (df['w_signal'].iloc[i] > 0.02) & (df['crossover'].iloc[i] < 0):
+				df['tradeable_yn'].iloc[i] = 1
+			elif (df['w_signal'].iloc[i] < -0.02) & (df['crossover'].iloc[i] > 0):
+				df['tradeable_yn'].iloc[i] = 1
+			else:
+				df['tradeable_yn'].iloc[i] = 0
+		
+		df['trading signal'] = np.nan
+		for i in range(len(df)):
+			if df['tradeable_yn'].iloc[i] == 1:
+				if df['crossover'].iloc[i] == 1:
+					df['trading signal'] = 1
+		      		elif df['crossover'].iloc[i] == -1:
+		      			df['trading signal'] = 0 # long securities only, no short selling (although 0 could simply be changed to -1).		      
 
 		df['trading signal'] = df['trading signal'].shift(1) # eliminate foresight bias
 
@@ -623,19 +643,12 @@ class Indicators(Data):
 
 		print(df)
 
-#		vix = yf.download('^VIX', period='10y', frequency='1d')
-#		vix['Ratio'] = (vix['Close'] / np.mean(vix['Close']))
-#		vix['adaptshort'] = shortspan * vix['Ratio']**vf * df['shortBullBear']**bbf
-#		vix['adaptlong'] = longspan * vix['Ratio']**vf * df['longBullBear']**bbf
-#		vix['adaptsignal'] = signalspan * vix['Ratio']**vf * df['signalBullBear']**bbf
-
 		df['Daily Rets'] = df['Close'].pct_change() + 1
 		df['Ratio'] = (df['Daily Rets'].rolling(rollingstd).std()) / df['Daily Rets'].std()
 		df['adaptshort'] = shortspan / df['Ratio']**vf * df['shortBullBear']**bbf
 		df['adaptlong'] = longspan / df['Ratio']**vf * df['longBullBear']**bbf
 		df['adaptsignal'] = signalspan / df['Ratio']**vf * df['signalBullBear']**bbf
 
-#		vix = vix[longspan+1:]
 		df = df[np.maximum(shortspan, np.maximum(longspan, np.maximum(signalspan, rollingstd)))+1:]
 
 		shortsp = df['adaptshort'].to_list()
