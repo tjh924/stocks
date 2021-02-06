@@ -706,3 +706,32 @@ class Indicators(Data):
 		plt.title(f'Variance-Dependent MACD ({shortspan}-{longspan}-{signalspan}) and Passive Cumulative Returns for {self.symbol.upper()}')
 		plt.legend(loc=0)
 		plt.show()
+	
+	def bollingerbandsrets(self, window=20, no_of_std=2):
+		"""Calculate returns of a stock over some period of time after trading using the Bollinger Bands indicator. Default is standard devation=2 and rolling window=20."""
+		df = yf.download(self.symbol, period='max', frequency='1d')
+		rolling_mean = df['Close'].ewm(span=window).mean()
+		rolling_std = df['Close'].ewm(span=window).mean()
+		df['rolling_mean'] = rolling_mean
+		df['bollinger_high'] = rolling_mean + (rolling_std * no_of_std) 
+		df['bollinger_low'] = rolling_mean - (rolling_std * no_of_std)
+		df['position'] = np.nan
+		for i in range(len(df)):
+			if df['Close'].iloc[i] > df['bollinger_high'].iloc[i]:
+				df['position'] = 0 # sell signal (this signal is converted to -1 if shorting securities is allowed, but here, long-only positions are assumed
+		        elif df['Close'].iloc[i] < df['bollinger_low'].iloc[i]:
+		      		df['position'] = 1 # buy signal
+		df['position'] = df['position'].shift(1) # eliminate foresight bias
+		df['position'] = df['position'].fillna(method='ffill')
+		df['logrets'] = np.log(df['Close'] / df['Close'].shift(1))
+		
+		data = super().close_data()
+		df = df.iloc[-len(data):-1]
+		      
+		df['position'].iloc[0] = 0
+		df['strategy_logrets'] = df['logrets'] * df['position']
+		
+		strategy = np.exp(df['strategy_logrets'].sum())
+		passive = np.exp(df['logrets'].sum())
+		      
+		return strategy - passive
